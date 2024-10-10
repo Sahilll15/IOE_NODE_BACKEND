@@ -81,15 +81,44 @@ app.post('/create-car-number', async (req, res) => {
   }
 });
 
-app.post('/upload', upload.single('file'), (req, res) => {
+app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).send('No file uploaded.');
   }else{
 
     const file = req.file;
 
-    
-    res.send('File uploaded successfully');
+
+    //add gemini code here 
+
+
+    let carNumber='xxxx'
+
+    const existingCar = await CarNumber.findOne({ carNumber });
+
+    if (existingCar) {
+      const currentTime = new Date();
+      const previousTime = new Date(existingCar.createdAt);
+      const durationInMilliseconds = currentTime - previousTime;
+      const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60)); 
+      const cost = durationInHours * 100;
+
+      const deleteCar=await CarNumber.deleteOne({ carNumber });
+
+      return res.status(200).json({
+        message: `Car left the parking lot.`,
+        duration: `${durationInHours} hour(s)`,
+        cost: `Rs. ${cost}`
+      });
+    } else {
+      const newCar = await CarNumber.create({ carNumber });
+
+      return res.status(200).json({
+        carNumber: newCar.carNumber,
+        message: 'Car number created successfully (Car entered parking lot)'
+      });
+    }
+
   }
   
 });
