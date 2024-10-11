@@ -1,6 +1,7 @@
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3000;
+const cors = require('cors');
+const port = process.env.PORT || 4000;
 const multer = require('multer');
 const mongoose = require('mongoose');
 const AWS = require('aws-sdk');
@@ -26,6 +27,7 @@ mongoose.connect(process.env.mongoDbURL, {
   .then(() => console.log('Connected to MongoDB'))
   .catch((err) => console.error('Error connecting to MongoDB:', err));
 
+app.use(cors());
 app.use(express.json());
 
 const upload = multer({
@@ -54,6 +56,10 @@ const carNumberSchema = new mongoose.Schema({
   model: String,
   insuranceValidUpto: Date,
   puccValidUpto: Date,
+  inTime: Date,
+  outTime: Date,
+  lastParkingDuration: Number, // in minutes
+  cost: Number, // Add this new field
 }, {
   timestamps: true
 });
@@ -148,48 +154,68 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
       // Extract the number plate from the uploaded S3 file
       const carNumber = await extractNumberPlateFromS3(bucketName, s3FileName);
-
-      // Simulate API call to get vehicle details (replace with actual API call)
-      const vehicleDetails = await getVehicleDetails(carNumber);
+      // const vehicleDetails = await getVehicleDetails(carNumber);
 
       const existingCar = await CarNumber.findOne({ carNumber });
+      const currentTime = new Date();
 
       if (existingCar) {
-        const currentTime = new Date();
-        const previousTime = new Date(existingCar.createdAt);
-        const durationInMilliseconds = currentTime - previousTime;
-        const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60));
-        const cost = durationInHours * 100;
+        if (existingCar.outTime) {
+          // Car is re-entering, update inTime and clear outTime
+          existingCar.inTime = currentTime;
+          existingCar.outTime = null;
+          existingCar.cost = null; // Reset cost when re-entering
+          await existingCar.save();
 
-        await CarNumber.deleteOne({ carNumber });
+          return res.status(200).json({
+            message: `Car re-entered the parking lot.`,
+            carNumber: existingCar.carNumber,
+            inTime: existingCar.inTime
+          });
+        } else {
+          // Car is leaving
+          existingCar.outTime = currentTime;
+          const durationInMilliseconds = existingCar.outTime - existingCar.inTime;
+          const durationInMinutes = Math.ceil(durationInMilliseconds / (1000 * 60));
+          const cost = Math.ceil(durationInMinutes / 60) * 100; // Assuming 100 Rs per hour
 
-        return res.status(200).json({
-          message: `Car left the parking lot.`,
-          duration: `${durationInHours} hour(s)`,
-          cost: `Rs. ${cost}`
-        });
+          existingCar.lastParkingDuration = durationInMinutes;
+          existingCar.cost = cost; // Store the calculated cost
+          await existingCar.save();
+
+          return res.status(200).json({
+            message: `Car left the parking lot.`,
+            carNumber: existingCar.carNumber,
+            duration: `${durationInMinutes} minute(s)`,
+            cost: `Rs. ${cost}`
+          });
+        }
       } else {
+        // New car entering
         const newCar = await CarNumber.create({
-          carNumber: vehicleDetails.reg_no,
-          ownerName: vehicleDetails.owner_name,
-          state: vehicleDetails.state,
-          pincode: vehicleDetails.pincode,
-          chassisNumber: vehicleDetails.chassis_number,
-          engineNumber: vehicleDetails.engine_number,
-          color: vehicleDetails.color,
-          regDate: new Date(vehicleDetails.reg_date),
-          vehicleClass: vehicleDetails.vehicle_class_desc,
-          fuelType: vehicleDetails.fuel_descr,
-          vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name,
-          model: vehicleDetails.model,
-          insuranceValidUpto: new Date(vehicleDetails.vehicle_insurance_details.insurance_upto),
-          puccValidUpto: new Date(vehicleDetails.vehicle_pucc_details.pucc_upto),
+          carNumber: carNumber,
+          inTime: currentTime,
+          cost: null, // Initialize cost as null for new entries
+          // carNumber: vehicleDetails.reg_no,
+          // ownerName: vehicleDetails.owner_name,
+          // state: vehicleDetails.state,
+          // pincode: vehicleDetails.pincode,
+          // chassisNumber: vehicleDetails.chassis_number,
+          // engineNumber: vehicleDetails.engine_number,
+          // color: vehicleDetails.color,
+          // regDate: new Date(vehicleDetails.reg_date),
+          // vehicleClass: vehicleDetails.vehicle_class_desc,
+          // fuelType: vehicleDetails.fuel_descr,
+          // vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name,
+          // model: vehicleDetails.model,
+          // insuranceValidUpto: new Date(vehicleDetails.vehicle_insurance_details.insurance_upto),
+          // puccValidUpto: new Date(vehicleDetails.vehicle_pucc_details.pucc_upto),
         });
 
         return res.status(200).json({
           carNumber: newCar.carNumber,
-          message: 'Car number created successfully (Car entered parking lot)',
-          details: newCar
+          message: 'Car entered parking lot',
+          inTime: newCar.inTime
         });
       }
     } catch (error) {
@@ -254,4 +280,38 @@ app.get('/', (req, res) => {
     </body>
     </html>
   `);
+});
+
+// Add this new GET endpoint after the existing endpoints
+app.get('/car/:carNumber', async (req, res) => {
+  try {
+    const carNumber = req.params.carNumber;
+    const car = await CarNumber.findOne({ carNumber });
+
+    if (!car) {
+      return res.status(404).json({ message: 'Car not found' });
+    }
+
+    return res.status(200).json(car);
+  } catch (error) {
+    console.error('Error fetching car details:', error);
+    return res.status(500).json({
+      message: 'Error fetching car details',
+      error: error.message
+    });
+  }
+});
+
+// Add this new GET endpoint after the existing endpoints
+app.get('/cars', async (req, res) => {
+  try {
+    const cars = await CarNumber.find({});
+    return res.status(200).json(cars);
+  } catch (error) {
+    console.error('Error fetching all car details:', error);
+    return res.status(500).json({
+      message: 'Error fetching all car details',
+      error: error.message
+    });
+  }
 });
