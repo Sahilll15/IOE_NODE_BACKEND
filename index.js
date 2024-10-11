@@ -41,6 +41,19 @@ const upload = multer({
 
 const carNumberSchema = new mongoose.Schema({
   carNumber: String,
+  ownerName: String,
+  state: String,
+  pincode: String,
+  chassisNumber: String,
+  engineNumber: String,
+  color: String,
+  regDate: Date,
+  vehicleClass: String,
+  fuelType: String,
+  vehicleManufacturer: String,
+  model: String,
+  insuranceValidUpto: Date,
+  puccValidUpto: Date,
 }, {
   timestamps: true
 });
@@ -82,7 +95,7 @@ const extractNumberPlateFromS3 = async (bucketName, fileName) => {
 
   const numberPlateRegex = /[A-Z]{2}\s?[0-9]{1,2}[A-Z]{0,2}\s?[0-9]{4}/;
   const match = fullText.match(numberPlateRegex);
-  
+
   if (match) {
     return match[0];
   } else {
@@ -90,12 +103,43 @@ const extractNumberPlateFromS3 = async (bucketName, fileName) => {
   }
 };
 
+// Function to get vehicle details (simulate API call)
+async function getVehicleDetails(carNumber) {
+  const url = 'https://rto-vehicle-information-verification-india.p.rapidapi.com/api/v1/rc/vehicleinfo';
+  const options = {
+    method: 'POST',
+    headers: {
+      'x-rapidapi-key': '1d5e91b844msh95a06d54614d1adp109a78jsn8d97e59b80e4',
+      'x-rapidapi-host': 'rto-vehicle-information-verification-india.p.rapidapi.com',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      reg_no: carNumber,
+      consent: 'Y',
+      consent_text: 'I hear by declare my consent agreement for fetching my information via AITAN Labs API'
+    })
+  };
+
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log(result);
+    return result;
+  } catch (error) {
+    console.error('Error fetching vehicle details:', error);
+    throw error;
+  }
+}
+
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).send('No file uploaded.');
   } else {
     const file = req.file;
-    const bucketName = 'aws-notes-sahil'; 
+    const bucketName = 'aws-notes-sahil';
 
     try {
       // Upload the file to S3
@@ -105,13 +149,16 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       // Extract the number plate from the uploaded S3 file
       const carNumber = await extractNumberPlateFromS3(bucketName, s3FileName);
 
+      // Simulate API call to get vehicle details (replace with actual API call)
+      const vehicleDetails = await getVehicleDetails(carNumber);
+
       const existingCar = await CarNumber.findOne({ carNumber });
 
       if (existingCar) {
         const currentTime = new Date();
         const previousTime = new Date(existingCar.createdAt);
         const durationInMilliseconds = currentTime - previousTime;
-        const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60)); 
+        const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60));
         const cost = durationInHours * 100;
 
         await CarNumber.deleteOne({ carNumber });
@@ -122,11 +169,27 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           cost: `Rs. ${cost}`
         });
       } else {
-        const newCar = await CarNumber.create({ carNumber });
+        const newCar = await CarNumber.create({
+          carNumber: vehicleDetails.reg_no,
+          ownerName: vehicleDetails.owner_name,
+          state: vehicleDetails.state,
+          pincode: vehicleDetails.pincode,
+          chassisNumber: vehicleDetails.chassis_number,
+          engineNumber: vehicleDetails.engine_number,
+          color: vehicleDetails.color,
+          regDate: new Date(vehicleDetails.reg_date),
+          vehicleClass: vehicleDetails.vehicle_class_desc,
+          fuelType: vehicleDetails.fuel_descr,
+          vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name,
+          model: vehicleDetails.model,
+          insuranceValidUpto: new Date(vehicleDetails.vehicle_insurance_details.insurance_upto),
+          puccValidUpto: new Date(vehicleDetails.vehicle_pucc_details.pucc_upto),
+        });
 
         return res.status(200).json({
           carNumber: newCar.carNumber,
-          message: 'Car number created successfully (Car entered parking lot)'
+          message: 'Car number created successfully (Car entered parking lot)',
+          details: newCar
         });
       }
     } catch (error) {
@@ -147,8 +210,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
-
-
 
 app.get('/', (req, res) => {
   res.send(`
