@@ -60,6 +60,7 @@ const carNumberSchema = new mongoose.Schema({
   outTime: Date,
   lastParkingDuration: Number, // in minutes
   cost: Number, // Add this new field
+  isParked: { type: Boolean, default: false }, // Add this new field
 }, {
   timestamps: true
 });
@@ -160,10 +161,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
       if (existingCar) {
         if (existingCar.outTime) {
-          // Car is re-entering, update inTime and clear outTime
+          // Car is re-entering, update inTime, clear outTime, and set isParked to true
           existingCar.inTime = currentTime;
           existingCar.outTime = null;
           existingCar.cost = null; // Reset cost when re-entering
+          existingCar.isParked = true; // Set isParked to true
           await existingCar.save();
 
           return res.status(200).json({
@@ -174,6 +176,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         } else {
           // Car is leaving
           existingCar.outTime = currentTime;
+          existingCar.isParked = false; // Set isParked to false
           const durationInMilliseconds = existingCar.outTime - existingCar.inTime;
           const durationInMinutes = Math.ceil(durationInMilliseconds / (1000 * 60));
           const cost = Math.ceil(durationInMinutes / 60) * 100; // Assuming 100 Rs per hour
@@ -216,6 +219,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           fuelType: vehicleDetails.fuel_descr || '',
           vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name || '',
           model: vehicleDetails.model || '',
+          isParked: true // Set isParked to true for new entries
         });
 
         return res.status(200).json({
