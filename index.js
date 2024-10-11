@@ -49,7 +49,7 @@ const carNumberSchema = new mongoose.Schema({
   chassisNumber: String,
   engineNumber: String,
   color: String,
-  regDate: Date,
+  regDate: String,
   vehicleClass: String,
   fuelType: String,
   vehicleManufacturer: String,
@@ -115,7 +115,7 @@ async function getVehicleDetails(carNumber) {
   const options = {
     method: 'POST',
     headers: {
-      'x-rapidapi-key': '1d5e91b844msh95a06d54614d1adp109a78jsn8d97e59b80e4',
+      'x-rapidapi-key': 'e320c6f594msh4c473664bcbd8b7p112369jsn899a67eb94f5',
       'x-rapidapi-host': 'rto-vehicle-information-verification-india.p.rapidapi.com',
       'Content-Type': 'application/json'
     },
@@ -133,7 +133,7 @@ async function getVehicleDetails(carNumber) {
     }
     const result = await response.json();
     console.log(result);
-    return result;
+    return result.result;
   } catch (error) {
     console.error('Error fetching vehicle details:', error);
     throw error;
@@ -154,7 +154,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
       // Extract the number plate from the uploaded S3 file
       const carNumber = await extractNumberPlateFromS3(bucketName, s3FileName);
-      // const vehicleDetails = await getVehicleDetails(carNumber);
 
       const existingCar = await CarNumber.findOne({ carNumber });
       const currentTime = new Date();
@@ -191,25 +190,32 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           });
         }
       } else {
-        // New car entering
+        let vehicleDetails = {};
+        try {
+          const apiResponse = await getVehicleDetails(carNumber);
+          if (apiResponse && apiResponse.status_code === 200) {
+            vehicleDetails = apiResponse.result;
+          } else {
+            console.error('Vehicle details API returned an error:', apiResponse);
+          }
+        } catch (error) {
+          console.error('Error fetching vehicle details:', error);
+        }
+
         const newCar = await CarNumber.create({
           carNumber: carNumber,
           inTime: currentTime,
-          cost: null, // Initialize cost as null for new entries
-          // carNumber: vehicleDetails.reg_no,
-          // ownerName: vehicleDetails.owner_name,
-          // state: vehicleDetails.state,
-          // pincode: vehicleDetails.pincode,
-          // chassisNumber: vehicleDetails.chassis_number,
-          // engineNumber: vehicleDetails.engine_number,
-          // color: vehicleDetails.color,
-          // regDate: new Date(vehicleDetails.reg_date),
-          // vehicleClass: vehicleDetails.vehicle_class_desc,
-          // fuelType: vehicleDetails.fuel_descr,
-          // vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name,
-          // model: vehicleDetails.model,
-          // insuranceValidUpto: new Date(vehicleDetails.vehicle_insurance_details.insurance_upto),
-          // puccValidUpto: new Date(vehicleDetails.vehicle_pucc_details.pucc_upto),
+          cost: null,
+          ownerName: vehicleDetails.owner_name || '',
+          state: vehicleDetails.state || '',
+          pincode: vehicleDetails.pincode || '',
+          chassisNumber: vehicleDetails.chassis_number || '',
+          engineNumber: vehicleDetails.engine_number || '',
+          color: vehicleDetails.color || '',
+          vehicleClass: vehicleDetails.vehicle_class_desc || '',
+          fuelType: vehicleDetails.fuel_descr || '',
+          vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name || '',
+          model: vehicleDetails.model || '',
         });
 
         return res.status(200).json({
