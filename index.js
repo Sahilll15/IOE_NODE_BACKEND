@@ -3,16 +3,28 @@ const app = express();
 const port = process.env.PORT || 3000;
 const multer = require('multer');
 const mongoose = require('mongoose');
+const AWS = require('aws-sdk');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
+// Initialize AWS S3 and Textract clients
+AWS.config.update({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION
+});
+
+const s3 = new AWS.S3();
+const textract = new AWS.Textract();
 
 mongoose.connect(process.env.mongoDbURL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000, 
+  serverSelectionTimeoutMS: 5000,
 })
-.then(() => console.log('Connected to MongoDB'))
-.catch((err) => console.error('Error connecting to MongoDB:', err));
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((err) => console.error('Error connecting to MongoDB:', err));
 
 app.use(express.json());
 
@@ -35,92 +47,101 @@ const carNumberSchema = new mongoose.Schema({
 
 const CarNumber = mongoose.model('CarNumber', carNumberSchema);
 
-app.post('/create-car-number', async (req, res) => {
-  try {
-    console.log('Create car number API called');
+// Function to upload file to S3
+const uploadFileToS3 = async (filePath, bucketName) => {
+  const fileContent = fs.readFileSync(filePath);
+  const fileName = path.basename(filePath);
 
-    const { carNumber } = req.body;
+  const params = {
+    Bucket: bucketName,
+    Key: fileName,
+    Body: fileContent
+  };
 
-    if (!carNumber) {
-      return res.status(400).json({
-        message: 'Car number is required in the request body'
-      });
+  const uploadResult = await s3.upload(params).promise();
+  return uploadResult.Location;
+};
+
+// Function to extract text from image using Textract
+const extractNumberPlateFromS3 = async (bucketName, fileName) => {
+  const params = {
+    Document: {
+      S3Object: {
+        Bucket: bucketName,
+        Name: fileName
+      }
     }
+  };
 
-    const existingCar = await CarNumber.findOne({ carNumber });
+  const response = await textract.detectDocumentText(params).promise();
+  const blocks = response.Blocks || [];
+  const fullText = blocks
+    .filter(block => block.BlockType === 'LINE')
+    .map(block => block.Text)
+    .join(' ');
 
-    if (existingCar) {
-      const currentTime = new Date();
-      const previousTime = new Date(existingCar.createdAt);
-      const durationInMilliseconds = currentTime - previousTime;
-      const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60)); 
-      const cost = durationInHours * 100;
-
-      const deleteCar=await CarNumber.deleteOne({ carNumber });
-
-      return res.status(200).json({
-        message: `Car left the parking lot.`,
-        duration: `${durationInHours} hour(s)`,
-        cost: `Rs. ${cost}`
-      });
-    } else {
-      const newCar = await CarNumber.create({ carNumber });
-
-      return res.status(200).json({
-        carNumber: newCar.carNumber,
-        message: 'Car number created successfully (Car entered parking lot)'
-      });
-    }
-
-  } catch (error) {
-    console.error('Error in creating car number:', error);
-    return res.status(500).json({
-      message: 'Error in creating car number',
-      error: error.message
-    });
+  const numberPlateRegex = /[A-Z]{2}\s?[0-9]{1,2}[A-Z]{0,2}\s?[0-9]{4}/;
+  const match = fullText.match(numberPlateRegex);
+  
+  if (match) {
+    return match[0];
+  } else {
+    throw new Error('No valid number plate found.');
   }
-});
+};
 
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).send('No file uploaded.');
-  }else{
-
+  } else {
     const file = req.file;
+    const bucketName = 'aws-notes-sahil'; 
 
+    try {
+      // Upload the file to S3
+      const s3FileUrl = await uploadFileToS3(file.path, bucketName);
+      const s3FileName = path.basename(s3FileUrl);
 
-    //add gemini code here 
+      // Extract the number plate from the uploaded S3 file
+      const carNumber = await extractNumberPlateFromS3(bucketName, s3FileName);
 
+      const existingCar = await CarNumber.findOne({ carNumber });
 
-    let carNumber='xxxx'
+      if (existingCar) {
+        const currentTime = new Date();
+        const previousTime = new Date(existingCar.createdAt);
+        const durationInMilliseconds = currentTime - previousTime;
+        const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60)); 
+        const cost = durationInHours * 100;
 
-    const existingCar = await CarNumber.findOne({ carNumber });
+        await CarNumber.deleteOne({ carNumber });
 
-    if (existingCar) {
-      const currentTime = new Date();
-      const previousTime = new Date(existingCar.createdAt);
-      const durationInMilliseconds = currentTime - previousTime;
-      const durationInHours = Math.ceil(durationInMilliseconds / (1000 * 60 * 60)); 
-      const cost = durationInHours * 100;
+        return res.status(200).json({
+          message: `Car left the parking lot.`,
+          duration: `${durationInHours} hour(s)`,
+          cost: `Rs. ${cost}`
+        });
+      } else {
+        const newCar = await CarNumber.create({ carNumber });
 
-      const deleteCar=await CarNumber.deleteOne({ carNumber });
-
-      return res.status(200).json({
-        message: `Car left the parking lot.`,
-        duration: `${durationInHours} hour(s)`,
-        cost: `Rs. ${cost}`
+        return res.status(200).json({
+          carNumber: newCar.carNumber,
+          message: 'Car number created successfully (Car entered parking lot)'
+        });
+      }
+    } catch (error) {
+      console.error('Error processing image:', error);
+      return res.status(500).json({
+        message: 'Error processing image',
+        error: error.message
       });
-    } else {
-      const newCar = await CarNumber.create({ carNumber });
-
-      return res.status(200).json({
-        carNumber: newCar.carNumber,
-        message: 'Car number created successfully (Car entered parking lot)'
+    } finally {
+      // Clean up: delete the uploaded file
+      fs.unlink(file.path, (err) => {
+        if (err) console.error('Error deleting file:', err);
       });
     }
-
   }
-  
 });
 
 app.listen(port, () => {
