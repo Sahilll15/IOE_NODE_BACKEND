@@ -179,7 +179,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           existingCar.isParked = false; // Set isParked to false
           const durationInMilliseconds = existingCar.outTime - existingCar.inTime;
           const durationInMinutes = Math.ceil(durationInMilliseconds / (1000 * 60));
-          const cost = Math.ceil(durationInMinutes / 60) * 100; // Assuming 100 Rs per hour
+          const cost = Math.ceil(durationInMinutes / 60) * 10; // Changed from 100 Rs per hour to 10 Rs per hour
 
           existingCar.lastParkingDuration = durationInMinutes;
           existingCar.cost = cost; // Store the calculated cost
