@@ -112,19 +112,13 @@ const extractNumberPlateFromS3 = async (bucketName, fileName) => {
 
 // Function to get vehicle details (simulate API call)
 async function getVehicleDetails(carNumber) {
-  const url = 'https://rto-vehicle-information-verification-india.p.rapidapi.com/api/v1/rc/vehicleinfo';
+  const url = `https://rc-verification-india.p.rapidapi.com/${carNumber}`;
   const options = {
-    method: 'POST',
+    method: 'GET',
     headers: {
-      'x-rapidapi-key': 'e320c6f594msh4c473664bcbd8b7p112369jsn899a67eb94f5',
-      'x-rapidapi-host': 'rto-vehicle-information-verification-india.p.rapidapi.com',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      reg_no: carNumber,
-      consent: 'Y',
-      consent_text: 'I hear by declare my consent agreement for fetching my information via AITAN Labs API'
-    })
+      'x-rapidapi-key': '69ff1ff3f3msh2c7273fec62e5c6p111852jsn53a1b299be2c',
+      'x-rapidapi-host': 'rc-verification-india.p.rapidapi.com'
+    }
   };
 
   try {
@@ -134,7 +128,7 @@ async function getVehicleDetails(carNumber) {
     }
     const result = await response.json();
     console.log(result);
-    return result.result;
+    return result;
   } catch (error) {
     console.error('Error fetching vehicle details:', error);
     throw error;
@@ -196,8 +190,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         let vehicleDetails = {};
         try {
           const apiResponse = await getVehicleDetails(carNumber);
-          if (apiResponse && apiResponse.status_code === 200) {
-            vehicleDetails = apiResponse.result;
+          if (apiResponse && apiResponse.success === true) {
+            vehicleDetails = apiResponse.detail;
           } else {
             console.error('Vehicle details API returned an error:', apiResponse);
           }
@@ -209,16 +203,16 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           carNumber: carNumber,
           inTime: currentTime,
           cost: null,
-          ownerName: vehicleDetails.owner_name || '',
-          state: vehicleDetails.state || '',
-          pincode: vehicleDetails.pincode || '',
-          chassisNumber: vehicleDetails.chassis_number || '',
-          engineNumber: vehicleDetails.engine_number || '',
+          ownerName: vehicleDetails.rc_owner_name || '',
+          state: vehicleDetails.states?.state_name || '',
+          pincode: vehicleDetails.registeredPlace || '',
+          chassisNumber: vehicleDetails.chassisNo || '',
+          engineNumber: vehicleDetails.engineNo || '',
           color: vehicleDetails.color || '',
-          vehicleClass: vehicleDetails.vehicle_class_desc || '',
-          fuelType: vehicleDetails.fuel_descr || '',
-          vehicleManufacturer: vehicleDetails.vehicle_manufacturer_name || '',
-          model: vehicleDetails.model || '',
+          vehicleClass: vehicleDetails.vehicleClassDesc || '',
+          fuelType: vehicleDetails.fuelType || '',
+          vehicleManufacturer: vehicleDetails.brand?.make_display || '',
+          model: vehicleDetails.model?.model_display || '',
           isParked: true // Set isParked to true for new entries
         });
 
